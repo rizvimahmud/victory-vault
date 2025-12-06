@@ -169,18 +169,20 @@ const GlossyAmount: React.FC<{
     
     setDisplayAmount(animate ? amount / 2 : amount);
     
+    // Slower, smoother scale-in animation
     gsap.to(scaleRef.current, {
       value: 1,
-      duration: 0.6,
-      ease: 'back.out(1.5)'
+      duration: 1.2,
+      ease: 'elastic.out(1, 0.5)'
     });
     
     if (animate) {
+      // Slower number counting animation
       gsap.to({ val: amount / 2 }, {
         val: amount,
-        duration: 1.5,
-        delay: 0.8,
-        ease: 'power2.inOut',
+        duration: 2.5,
+        delay: 1.0,
+        ease: 'power1.inOut',
         onUpdate: function() {
           setDisplayAmount(Math.round(this.targets()[0].val));
         }
