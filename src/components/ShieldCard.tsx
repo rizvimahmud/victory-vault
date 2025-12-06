@@ -17,6 +17,7 @@ const goldBorderVertexShader = `
 
 const goldBorderFragmentShader = `
   uniform float uTime;
+  uniform float uLightFromLeft;
   
   varying vec2 vUv;
   varying vec3 vPosition;
@@ -24,33 +25,39 @@ const goldBorderFragmentShader = `
   void main() {
     vec2 uv = vUv;
     
-    // Gold gradient from top-left to bottom-right
-    float gradient = (uv.x + uv.y) * 0.5;
+    // For left card (light from left): bright on left (low uv.x)
+    // For right card (light from right): bright on right (high uv.x)
+    // We want gradient to go from bright (light side) to dark (shadow side)
+    float lightX = uLightFromLeft > 0.5 ? uv.x : (1.0 - uv.x);
+    
+    // Gold gradient - lightX 0 = light side, lightX 1 = shadow side
+    float gradient = (lightX * 0.7 + (1.0 - uv.y) * 0.3);
     
     // Base gold colors
-    vec3 goldLight = vec3(0.95, 0.85, 0.55);  // Light gold
+    vec3 goldLight = vec3(0.95, 0.85, 0.55);  // Light gold (bright side)
     vec3 goldMid = vec3(0.80, 0.65, 0.35);    // Mid gold
-    vec3 goldDark = vec3(0.55, 0.40, 0.20);   // Dark gold/bronze
+    vec3 goldDark = vec3(0.50, 0.35, 0.18);   // Dark gold/bronze (shadow side)
     
-    // Create banded gradient for 3D metallic look
+    // Create smooth gradient for 3D metallic look - bright to dark
     vec3 color;
-    if (gradient < 0.3) {
-      color = mix(goldDark, goldMid, gradient / 0.3);
-    } else if (gradient < 0.6) {
-      color = mix(goldMid, goldLight, (gradient - 0.3) / 0.3);
+    if (gradient < 0.35) {
+      color = mix(goldLight, goldMid, gradient / 0.35);
+    } else if (gradient < 0.7) {
+      color = mix(goldMid, goldDark, (gradient - 0.35) / 0.35);
     } else {
-      color = mix(goldLight, goldMid, (gradient - 0.6) / 0.4);
+      color = goldDark;
     }
     
     // Subtle shimmer
     float shimmer = sin((uv.x * 8.0 + uv.y * 8.0) - uTime * 1.5) * 0.5 + 0.5;
-    shimmer = pow(shimmer, 4.0) * 0.15;
+    shimmer = pow(shimmer, 4.0) * 0.12;
     color += vec3(shimmer);
     
-    // Edge highlight
-    float edgeHighlight = smoothstep(0.0, 0.15, uv.x) * smoothstep(1.0, 0.85, uv.x);
-    edgeHighlight *= smoothstep(0.0, 0.15, uv.y) * smoothstep(1.0, 0.85, uv.y);
-    color = mix(color * 0.7, color, edgeHighlight);
+    // Add highlight on the light side edge
+    float edgeGlow = uLightFromLeft > 0.5 
+      ? smoothstep(0.3, 0.0, uv.x) 
+      : smoothstep(0.7, 1.0, uv.x);
+    color += goldLight * edgeGlow * 0.15;
     
     gl_FragColor = vec4(color, 1.0);
   }
@@ -146,12 +153,15 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
   const blueMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const glowMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const [hovered, setHovered] = useState(false);
+  const [showRectShape, setShowRectShape] = useState(false);
   
   const animState = useRef({
     rotationY: 0,
     scale: 0,
     positionZ: 0,
-    hoverScale: 1
+    positionX: 0,
+    hoverScale: 1,
+    shapeBlend: 0 // 0 = shield, 1 = rectangle
   });
   
   // Create shield shape - outer border
@@ -209,18 +219,82 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
     return shape;
   }, []);
   
+  // Rectangular card shape - outer border (for revealed state)
+  const rectShape = useMemo(() => {
+    const shape = new THREE.Shape();
+    const width = 1.5;
+    const height = 2.0;
+    const radius = 0.08;
+    
+    shape.moveTo(-width/2 + radius, height/2);
+    shape.lineTo(width/2 - radius, height/2);
+    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - radius);
+    shape.lineTo(width/2, -height/2 + radius);
+    shape.quadraticCurveTo(width/2, -height/2, width/2 - radius, -height/2);
+    shape.lineTo(-width/2 + radius, -height/2);
+    shape.quadraticCurveTo(-width/2, -height/2, -width/2, -height/2 + radius);
+    shape.lineTo(-width/2, height/2 - radius);
+    shape.quadraticCurveTo(-width/2, height/2, -width/2 + radius, height/2);
+    
+    return shape;
+  }, []);
+  
+  // Inner rectangular shape for blue area
+  const innerRectShape = useMemo(() => {
+    const shape = new THREE.Shape();
+    const width = 1.32;
+    const height = 1.82;
+    const radius = 0.06;
+    
+    shape.moveTo(-width/2 + radius, height/2);
+    shape.lineTo(width/2 - radius, height/2);
+    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - radius);
+    shape.lineTo(width/2, -height/2 + radius);
+    shape.quadraticCurveTo(width/2, -height/2, width/2 - radius, -height/2);
+    shape.lineTo(-width/2 + radius, -height/2);
+    shape.quadraticCurveTo(-width/2, -height/2, -width/2, -height/2 + radius);
+    shape.lineTo(-width/2, height/2 - radius);
+    shape.quadraticCurveTo(-width/2, height/2, -width/2 + radius, height/2);
+    
+    return shape;
+  }, []);
+  
+  // Gold inner frame line for rectangle
+  const goldFrameShape = useMemo(() => {
+    const shape = new THREE.Shape();
+    const width = 1.20;
+    const height = 1.70;
+    const radius = 0.05;
+    
+    shape.moveTo(-width/2 + radius, height/2);
+    shape.lineTo(width/2 - radius, height/2);
+    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - radius);
+    shape.lineTo(width/2, -height/2 + radius);
+    shape.quadraticCurveTo(width/2, -height/2, width/2 - radius, -height/2);
+    shape.lineTo(-width/2 + radius, -height/2);
+    shape.quadraticCurveTo(-width/2, -height/2, -width/2, -height/2 + radius);
+    shape.lineTo(-width/2, height/2 - radius);
+    shape.quadraticCurveTo(-width/2, height/2, -width/2 + radius, height/2);
+    
+    return shape;
+  }, []);
+  
+  // Determine if light comes from left based on card position
+  const lightFromLeft = position[0] < 0;
+  
   // Gold border material
   const goldMaterial = useMemo(() => {
     const mat = new THREE.ShaderMaterial({
       vertexShader: goldBorderVertexShader,
       fragmentShader: goldBorderFragmentShader,
       uniforms: {
-        uTime: { value: 0 }
+        uTime: { value: 0 },
+        uLightFromLeft: { value: lightFromLeft ? 1.0 : 0.0 }
       }
     });
     goldMaterialRef.current = mat;
     return mat;
-  }, []);
+  }, [lightFromLeft]);
   
   // Blue interior material
   const blueMaterial = useMemo(() => {
@@ -267,30 +341,66 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
   // Flip and zoom animation when selected
   useEffect(() => {
     if (isSelected) {
-      // Zoom towards camera then flip
+      // Calculate how much to move toward center (negative of original x position)
+      const moveToCenter = -position[0] * 0.7; // Move 70% toward center
+      
+      // Zoom towards camera, move to center, flip, and change shape
       const tl = gsap.timeline();
       
+      // Phase 1: Zoom forward and start moving to center
       tl.to(animState.current, {
-        positionZ: 2,
-        scale: 1.3,
+        positionZ: 2.5,
+        positionX: moveToCenter,
+        scale: 1.4,
+        duration: 0.5,
+        ease: 'power2.out'
+      })
+      // Phase 2: Flip the card
+      .to(animState.current, {
+        rotationY: Math.PI,
+        duration: 0.6,
+        ease: 'power2.inOut',
+        onStart: () => {
+          // Switch to rectangular shape at midpoint of flip
+          setTimeout(() => setShowRectShape(true), 300);
+        }
+      })
+      // Phase 3: Settle back slightly but stay forward and centered
+      .to(animState.current, {
+        positionZ: 1.5,
+        scale: 1.25,
         duration: 0.4,
+        ease: 'power2.out'
+      });
+      
+      return () => { tl.kill(); };
+    }
+  }, [isSelected, position]);
+  
+  // Handle flip for non-selected card (when other card is selected)
+  useEffect(() => {
+    if (isFlipped && !isSelected) {
+      // Flip the non-selected card (staying in place, maybe moving back slightly)
+      const tl = gsap.timeline({ delay: 0.8 }); // Delay to start after selected card animation
+      
+      tl.to(animState.current, {
+        positionZ: -0.5, // Move back slightly
+        scale: 0.9, // Slightly smaller
+        duration: 0.3,
         ease: 'power2.out'
       })
       .to(animState.current, {
         rotationY: Math.PI,
         duration: 0.5,
-        ease: 'power2.inOut'
-      })
-      .to(animState.current, {
-        positionZ: 0,
-        scale: 1,
-        duration: 0.3,
-        ease: 'power2.in'
+        ease: 'power2.inOut',
+        onStart: () => {
+          setTimeout(() => setShowRectShape(true), 250);
+        }
       });
       
       return () => { tl.kill(); };
     }
-  }, [isSelected]);
+  }, [isFlipped, isSelected]);
   
   // Hover effect
   useEffect(() => {
@@ -321,6 +431,7 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
       groupRef.current.rotation.y = animState.current.rotationY;
       const s = animState.current.scale * scale * animState.current.hoverScale;
       groupRef.current.scale.set(s, s, s);
+      groupRef.current.position.x = position[0] + animState.current.positionX;
       groupRef.current.position.z = position[2] + animState.current.positionZ;
     }
     
@@ -342,9 +453,6 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
     }
   };
   
-  // Determine what to show on back of card
-  const backDisplay = showSadEmoji ? '😢' : backContent;
-  
   return (
     <group 
       ref={groupRef} 
@@ -353,7 +461,7 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
       onPointerOver={() => !disabled && setHovered(true)}
       onPointerOut={() => setHovered(false)}
     >
-      {/* Front face */}
+      {/* Front face - Shield shape */}
       <group rotation={[0, 0, 0]}>
         {/* Gold gradient border */}
         <mesh position={[0, 0, -0.02]}>
@@ -367,39 +475,51 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
           <primitive object={blueMaterial} attach="material" />
         </mesh>
         
-        {/* Cyan glow line */}
-        <mesh position={[0, 0, 0.001]}>
-          <shapeGeometry args={[glowLineShape]} />
-          <primitive object={glowMaterial} attach="material" />
+        {/* Horizontal cyan glow line across the card */}
+        <mesh position={[0, 0.05, 0.005]}>
+          <planeGeometry args={[1.1, 0.02]} />
+          <meshBasicMaterial color="#4dd0e1" transparent opacity={0.9} />
+        </mesh>
+        {/* Glow effect for the line */}
+        <mesh position={[0, 0.05, 0.004]}>
+          <planeGeometry args={[1.15, 0.06]} />
+          <meshBasicMaterial color="#4dd0e1" transparent opacity={0.3} />
         </mesh>
         
-        {/* Small Victory Vault logo placeholder at top */}
+        {/* Vertical cyan line - position based on card side */}
+        <mesh position={[position[0] < 0 ? -0.48 : 0.48, 0.35, 0.005]}>
+          <planeGeometry args={[0.015, 0.5]} />
+          <meshBasicMaterial color="#4dd0e1" transparent opacity={0.8} />
+        </mesh>
+        
+        {/* Small Victory Vault text at top - inside the blue area */}
         <Text
-          position={[0, 0.55, 0.02]}
-          fontSize={0.12}
-          color="#8899aa"
+          position={[0, 0.58, 0.02]}
+          fontSize={0.09}
+          color="#aabbcc"
           anchorX="center"
           anchorY="middle"
           font="/fonts/BebasNeue-Regular.ttf"
+          letterSpacing={0.05}
         >
           VICTORY VAULT
         </Text>
         
         {/* Main question mark - large gold with shadow */}
         <Text
-          position={[0.02, -0.08, 0.015]}
-          fontSize={1.0}
-          color="#554422"
+          position={[0.015, -0.18, 0.015]}
+          fontSize={0.95}
+          color="#3a3520"
           anchorX="center"
           anchorY="middle"
           font="/fonts/BebasNeue-Regular.ttf"
-          fillOpacity={0.4}
+          fillOpacity={0.5}
         >
           {frontContent}
         </Text>
         <Text
-          position={[0, -0.05, 0.02]}
-          fontSize={1.0}
+          position={[0, -0.15, 0.02]}
+          fontSize={0.95}
           color="#d4a84b"
           anchorX="center"
           anchorY="middle"
@@ -408,71 +528,101 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
           {frontContent}
         </Text>
         
-        {/* FINAL FLIP text at bottom */}
+        {/* FINAL FLIP text at bottom - inside the blue area */}
         <Text
-          position={[0, -0.72, 0.02]}
-          fontSize={0.11}
-          color="#8899aa"
+          position={[0, -0.62, 0.02]}
+          fontSize={0.09}
+          color="#aabbcc"
           anchorX="center"
           anchorY="middle"
           font="/fonts/BebasNeue-Regular.ttf"
-          letterSpacing={0.1}
+          letterSpacing={0.08}
         >
           FINAL FLIP
         </Text>
       </group>
       
-      {/* Back face */}
+      {/* Back face - Rectangular shape when revealed */}
       <group rotation={[0, Math.PI, 0]}>
-        {/* Gold gradient border */}
+        {/* Outer cyan glow border */}
+        <mesh position={[0, 0, -0.03]}>
+          <shapeGeometry args={[showRectShape ? rectShape : shieldShape]} />
+          <meshBasicMaterial color="#4aa8d8" transparent opacity={0.8} />
+        </mesh>
+        
+        {/* Gold border - slightly larger for revealed rect */}
         <mesh position={[0, 0, -0.02]}>
-          <shapeGeometry args={[shieldShape]} />
-          <meshBasicMaterial color={isWinner ? '#ffd700' : (showSadEmoji ? '#555' : '#c9a648')} />
+          <shapeGeometry args={[showRectShape ? rectShape : shieldShape]} />
+          <meshBasicMaterial color={isWinner ? '#d4a84b' : (showSadEmoji ? '#5577aa' : '#d4a84b')} />
         </mesh>
         
         {/* Blue interior */}
         <mesh position={[0, 0, -0.01]}>
-          <shapeGeometry args={[innerShieldShape]} />
-          <meshBasicMaterial color={showSadEmoji ? '#1a1a2a' : '#1a3a5c'} side={THREE.FrontSide} />
+          <shapeGeometry args={[showRectShape ? innerRectShape : innerShieldShape]} />
+          <primitive object={blueMaterial} attach="material" />
         </mesh>
         
-        {/* Victory Vault text on back */}
-        <Text
-          position={[0, 0.55, 0.02]}
-          fontSize={0.12}
-          color="#8899aa"
-          anchorX="center"
-          anchorY="middle"
-          font="/fonts/BebasNeue-Regular.ttf"
-        >
-          VICTORY VAULT
-        </Text>
+        {/* Gold inner frame line for revealed cards */}
+        {showRectShape && (
+          <mesh position={[0, 0, 0.001]}>
+            <shapeGeometry args={[goldFrameShape]} />
+            <meshBasicMaterial color="#b89840" transparent opacity={0.5} wireframe />
+          </mesh>
+        )}
         
-        {/* Back content */}
-        <Text
-          position={[0, -0.05, 0.02]}
-          fontSize={showSadEmoji ? 0.75 : 1.0}
-          color={isWinner ? '#ffd700' : (showSadEmoji ? '#666' : '#d4a84b')}
-          anchorX="center"
-          anchorY="middle"
-          font={showSadEmoji ? undefined : "/fonts/BebasNeue-Regular.ttf"}
-        >
-          {backDisplay}
-        </Text>
-        
-        {/* FINAL FLIP text at bottom */}
-        <Text
-          position={[0, -0.72, 0.02]}
-          fontSize={0.11}
-          color="#8899aa"
-          anchorX="center"
-          anchorY="middle"
-          font="/fonts/BebasNeue-Regular.ttf"
-          letterSpacing={0.1}
-        >
-          FINAL FLIP
-        </Text>
+        {/* Back content - Number or Sad Face */}
+        {showSadEmoji ? (
+          /* Sad face graphic instead of emoji */
+          <group position={[0, 0.05, 0.02]}>
+            {/* Left eye */}
+            <mesh position={[-0.22, 0.15, 0]}>
+              <planeGeometry args={[0.15, 0.12]} />
+              <meshBasicMaterial color="#b89840" />
+            </mesh>
+            {/* Right eye */}
+            <mesh position={[0.22, 0.15, 0]}>
+              <planeGeometry args={[0.15, 0.12]} />
+              <meshBasicMaterial color="#b89840" />
+            </mesh>
+            {/* Sad mouth - curved line made with thin box */}
+            <group position={[0, -0.25, 0]}>
+              {/* Create curved sad mouth with multiple segments */}
+              <mesh position={[-0.3, 0.08, 0]} rotation={[0, 0, -0.3]}>
+                <planeGeometry args={[0.18, 0.04]} />
+                <meshBasicMaterial color="#b89840" />
+              </mesh>
+              <mesh position={[0, 0, 0]}>
+                <planeGeometry args={[0.25, 0.04]} />
+                <meshBasicMaterial color="#b89840" />
+              </mesh>
+              <mesh position={[0.3, 0.08, 0]} rotation={[0, 0, 0.3]}>
+                <planeGeometry args={[0.18, 0.04]} />
+                <meshBasicMaterial color="#b89840" />
+              </mesh>
+            </group>
+          </group>
+        ) : (
+          /* Number display */
+          <Text
+            position={[0, 0.05, 0.02]}
+            fontSize={1.1}
+            color="#d4a84b"
+            anchorX="center"
+            anchorY="middle"
+            font="/fonts/BebasNeue-Regular.ttf"
+          >
+            {backContent}
+          </Text>
+        )}
       </group>
+      
+      {/* Shadow plane behind selected card */}
+      {isSelected && (
+        <mesh position={[-0.15, -0.1, -0.2]} rotation={[0, 0, 0]}>
+          <shapeGeometry args={[showRectShape ? rectShape : shieldShape]} />
+          <meshBasicMaterial color="#000000" transparent opacity={0.3} />
+        </mesh>
+      )}
       
       {/* Glow effects for winner */}
       {isWinner && (

@@ -510,7 +510,7 @@ const GameScene: React.FC<{
             backContent="1"
             scale={1.5}
             entranceDelay={0.4}
-            isFlipped={selectedCard === 0}
+            isFlipped={selectedCard !== null}
             isSelected={selectedCard === 0}
             isWinner={selectedCard === 0 && isWinner}
             showSadEmoji={selectedCard === 0 && !isWinner && phase === 'result'}
@@ -523,7 +523,7 @@ const GameScene: React.FC<{
             backContent="2"
             scale={1.5}
             entranceDelay={0.6}
-            isFlipped={selectedCard === 1}
+            isFlipped={selectedCard !== null}
             isSelected={selectedCard === 1}
             isWinner={selectedCard === 1 && isWinner}
             showSadEmoji={selectedCard === 1 && !isWinner && phase === 'result'}
