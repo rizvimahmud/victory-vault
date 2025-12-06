@@ -89,9 +89,19 @@ const FadeInText: React.FC<{
   visible?: boolean;
 }> = ({ children, position, fontSize, color, delay = 0, letterSpacing = 0.1, visible = true }) => {
   const [opacity, setOpacity] = useState(0);
-  const [currentY, setCurrentY] = useState(position[1] - 0.3);
+  const [currentY, setCurrentY] = useState(position[1]);
   const opacityRef = useRef({ value: 0 });
-  const yRef = useRef({ value: position[1] - 0.3 });
+  const yRef = useRef({ value: position[1] });
+  const initializedRef = useRef(false);
+  
+  // Initialize position on mount
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      yRef.current.value = position[1] - 0.3;
+      setCurrentY(position[1] - 0.3);
+    }
+  }, []);
   
   useEffect(() => {
     if (!visible) {
@@ -103,11 +113,7 @@ const FadeInText: React.FC<{
       return;
     }
     
-    opacityRef.current.value = 0;
-    yRef.current.value = position[1] - 0.3;
-    setOpacity(0);
-    setCurrentY(position[1] - 0.3);
-    
+    // Animate in
     const tl = gsap.timeline({ delay });
     
     tl.to(opacityRef.current, {
@@ -124,7 +130,7 @@ const FadeInText: React.FC<{
     }, 0);
     
     return () => { tl.kill(); };
-  }, [delay, position, visible]);
+  }, []); 
   
   if (!visible && opacity === 0) return null;
   
@@ -474,7 +480,7 @@ const GameScene: React.FC<{
       {showCards && (
         <>
           <FadeInText
-            position={[0, 3, 0]}
+            position={[0, 2, 1]}
             fontSize={0.38}
             color="#d4d8dc"
             delay={0.2}
