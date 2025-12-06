@@ -324,6 +324,15 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
     return mat;
   }, []);
   
+  // Cleanup materials on unmount to prevent GPU memory leaks
+  useEffect(() => {
+    return () => {
+      goldMaterial.dispose();
+      blueMaterial.dispose();
+      glowMaterial.dispose();
+    };
+  }, [goldMaterial, blueMaterial, glowMaterial]);
+  
   // Entrance animation
   useEffect(() => {
     gsap.to(animState.current, {
@@ -346,6 +355,7 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
       
       // Zoom towards camera, move to center, flip, and change shape
       const tl = gsap.timeline();
+      let shapeTimeout: ReturnType<typeof setTimeout>;
       
       // Phase 1: Zoom forward and start moving to center
       tl.to(animState.current, {
@@ -362,7 +372,7 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
         ease: 'power2.inOut',
         onStart: () => {
           // Switch to rectangular shape at midpoint of flip
-          setTimeout(() => setShowRectShape(true), 300);
+          shapeTimeout = setTimeout(() => setShowRectShape(true), 300);
         }
       })
       // Phase 3: Settle back slightly but stay forward and centered
@@ -373,7 +383,10 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
         ease: 'power2.out'
       });
       
-      return () => { tl.kill(); };
+      return () => {
+        tl.kill();
+        if (shapeTimeout) clearTimeout(shapeTimeout);
+      };
     }
   }, [isSelected, position]);
   
@@ -382,6 +395,7 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
     if (isFlipped && !isSelected) {
       // Flip the non-selected card (staying in place, maybe moving back slightly)
       const tl = gsap.timeline({ delay: 0.8 }); // Delay to start after selected card animation
+      let shapeTimeout: ReturnType<typeof setTimeout>;
       
       tl.to(animState.current, {
         positionZ: -0.5, // Move back slightly
@@ -394,11 +408,14 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
         duration: 0.5,
         ease: 'power2.inOut',
         onStart: () => {
-          setTimeout(() => setShowRectShape(true), 250);
+          shapeTimeout = setTimeout(() => setShowRectShape(true), 250);
         }
       });
       
-      return () => { tl.kill(); };
+      return () => {
+        tl.kill();
+        if (shapeTimeout) clearTimeout(shapeTimeout);
+      };
     }
   }, [isFlipped, isSelected]);
   

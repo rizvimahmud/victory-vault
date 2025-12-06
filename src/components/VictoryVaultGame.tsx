@@ -28,8 +28,6 @@ interface GameState {
 
 // Gradient background plane
 const GradientBackground: React.FC = () => {
-  const materialRef = useRef<THREE.ShaderMaterial>(null);
-  
   const material = React.useMemo(() => {
     return new THREE.ShaderMaterial({
       uniforms: {
@@ -70,6 +68,13 @@ const GradientBackground: React.FC = () => {
     });
   }, []);
   
+  // Dispose material on unmount
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
+  
   return (
     <mesh position={[0, 0, -10]}>
       <planeGeometry args={[30, 20]} />
@@ -105,12 +110,12 @@ const FadeInText: React.FC<{
   
   useEffect(() => {
     if (!visible) {
-      gsap.to(opacityRef.current, {
+      const tween = gsap.to(opacityRef.current, {
         value: 0,
         duration: 0.3,
         onUpdate: () => setOpacity(opacityRef.current.value)
       });
-      return;
+      return () => { tween.kill(); };
     }
     
     // Animate in
@@ -131,6 +136,14 @@ const FadeInText: React.FC<{
     
     return () => { tl.kill(); };
   }, []); 
+  
+  // Cleanup all GSAP tweens on unmount
+  useEffect(() => {
+    return () => {
+      gsap.killTweensOf(opacityRef.current);
+      gsap.killTweensOf(yRef.current);
+    };
+  }, []);
   
   if (!visible && opacity === 0) return null;
   
@@ -160,6 +173,7 @@ const GlossyAmount: React.FC<{
   const [displayAmount, setDisplayAmount] = useState(animate ? amount / 2 : amount);
   const groupRef = useRef<THREE.Group>(null);
   const scaleRef = useRef({ value: 0 });
+  const countTweenRef = useRef<gsap.core.Tween | null>(null);
   
   useEffect(() => {
     if (!visible) {
@@ -170,7 +184,7 @@ const GlossyAmount: React.FC<{
     setDisplayAmount(animate ? amount / 2 : amount);
     
     // Slower, smoother scale-in animation
-    gsap.to(scaleRef.current, {
+    const scaleTween = gsap.to(scaleRef.current, {
       value: 1,
       duration: 1.2,
       ease: 'elastic.out(1, 0.5)'
@@ -178,17 +192,31 @@ const GlossyAmount: React.FC<{
     
     if (animate) {
       // Slower number counting animation
-      gsap.to({ val: amount / 2 }, {
+      const countObj = { val: amount / 2 };
+      countTweenRef.current = gsap.to(countObj, {
         val: amount,
         duration: 2.5,
         delay: 1.0,
         ease: 'power1.inOut',
-        onUpdate: function() {
-          setDisplayAmount(Math.round(this.targets()[0].val));
+        onUpdate: () => {
+          setDisplayAmount(Math.round(countObj.val));
         }
       });
     }
+    
+    return () => {
+      scaleTween.kill();
+      if (countTweenRef.current) countTweenRef.current.kill();
+    };
   }, [amount, animate, visible]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      gsap.killTweensOf(scaleRef.current);
+      if (countTweenRef.current) countTweenRef.current.kill();
+    };
+  }, []);
   
   useFrame(() => {
     if (groupRef.current) {
@@ -265,8 +293,9 @@ const MultiplierBadge: React.FC<{ position: [number, number, number]; visible: b
   }, []);
   
   useEffect(() => {
+    let tween: gsap.core.Tween | undefined;
     if (visible) {
-      gsap.to(scaleRef.current, {
+      tween = gsap.to(scaleRef.current, {
         value: 1,
         duration: 0.6,
         ease: 'back.out(2)'
@@ -274,7 +303,17 @@ const MultiplierBadge: React.FC<{ position: [number, number, number]; visible: b
     } else {
       scaleRef.current.value = 0;
     }
+    return () => {
+      if (tween) tween.kill();
+    };
   }, [visible]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      gsap.killTweensOf(scaleRef.current);
+    };
+  }, []);
   
   useFrame(() => {
     if (groupRef.current) {

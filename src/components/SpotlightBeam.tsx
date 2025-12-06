@@ -140,6 +140,13 @@ const SpotlightBeam: React.FC<SpotlightBeamProps> = ({
     });
   }, [color, intensity]);
 
+  // Dispose material on unmount to prevent GPU memory leaks
+  useEffect(() => {
+    return () => {
+      shaderMaterial.dispose();
+    };
+  }, [shaderMaterial]);
+
   // Animate visibility
   useEffect(() => {
     if (visible) {

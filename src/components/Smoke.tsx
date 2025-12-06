@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { createSmokeMaterial } from '../shaders/smoke';
@@ -19,6 +19,13 @@ const Smoke: React.FC<SmokeProps> = ({
   const material = useMemo(() => {
     return createSmokeMaterial(opacity);
   }, [opacity]);
+  
+  // Dispose material on unmount
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
   
   useFrame((state) => {
     if (material.uniforms) {

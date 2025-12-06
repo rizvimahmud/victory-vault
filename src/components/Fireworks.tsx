@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import gsap from 'gsap';
 
 interface ParticleData {
   position: THREE.Vector3;
@@ -31,6 +30,7 @@ const Fireworks: React.FC<FireworksProps> = ({
   const particlesRef = useRef<ParticleData[]>([]);
   const activeRef = useRef(false);
   const startTimeRef = useRef(0);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const { geometry, material } = useMemo(() => {
     const geo = new THREE.BufferGeometry();
@@ -79,6 +79,15 @@ const Fireworks: React.FC<FireworksProps> = ({
     return { geometry: geo, material: mat };
   }, [count]);
   
+  // Dispose geometry and material on unmount
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      material.dispose();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [geometry, material]);
+  
   // Initialize particles
   useEffect(() => {
     particlesRef.current = [];
@@ -111,12 +120,14 @@ const Fireworks: React.FC<FireworksProps> = ({
     }
     
     // Trigger animation after delay
-    const timeout = setTimeout(() => {
+    timeoutRef.current = setTimeout(() => {
       activeRef.current = true;
       startTimeRef.current = Date.now();
     }, delay * 1000);
     
-    return () => clearTimeout(timeout);
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
   }, [count, delay]);
   
   useFrame((state, delta) => {

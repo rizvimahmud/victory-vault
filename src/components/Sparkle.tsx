@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import gsap from 'gsap';
@@ -22,10 +22,32 @@ const Sparkle: React.FC<SparkleProps> = ({
   const scaleRef = useRef({ value: 0 });
   const rotationRef = useRef({ value: 0 });
   
+  // Create 4-pointed star shape - memoize to prevent recreation
+  const starShape = useMemo(() => {
+    const shape = new THREE.Shape();
+    const points = 4;
+    const outerRadius = size;
+    const innerRadius = size * 0.15;
+    
+    for (let i = 0; i < points * 2; i++) {
+      const radius = i % 2 === 0 ? outerRadius : innerRadius;
+      const angle = (i * Math.PI) / points - Math.PI / 2;
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      
+      if (i === 0) {
+        shape.moveTo(x, y);
+      } else {
+        shape.lineTo(x, y);
+      }
+    }
+    shape.closePath();
+    
+    return shape;
+  }, [size]);
+  
   useEffect(() => {
     if (!groupRef.current) return;
-    
-    const group = groupRef.current;
     
     // Scale animation
     const tl = gsap.timeline({ delay });
@@ -49,7 +71,7 @@ const Sparkle: React.FC<SparkleProps> = ({
     });
     
     // Rotation animation
-    gsap.to(rotationRef.current, {
+    const rotationTween = gsap.to(rotationRef.current, {
       value: Math.PI * 0.5,
       duration: duration,
       delay,
@@ -58,9 +80,17 @@ const Sparkle: React.FC<SparkleProps> = ({
     
     return () => {
       tl.kill();
-      gsap.killTweensOf(rotationRef.current);
+      rotationTween.kill();
     };
   }, [delay, duration]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      gsap.killTweensOf(scaleRef.current);
+      gsap.killTweensOf(rotationRef.current);
+    };
+  }, []);
   
   useFrame(() => {
     if (groupRef.current) {
@@ -69,30 +99,6 @@ const Sparkle: React.FC<SparkleProps> = ({
       groupRef.current.rotation.z = rotationRef.current.value;
     }
   });
-  
-  // Create 4-pointed star shape
-  const starShape = React.useMemo(() => {
-    const shape = new THREE.Shape();
-    const points = 4;
-    const outerRadius = size;
-    const innerRadius = size * 0.15;
-    
-    for (let i = 0; i < points * 2; i++) {
-      const radius = i % 2 === 0 ? outerRadius : innerRadius;
-      const angle = (i * Math.PI) / points - Math.PI / 2;
-      const x = Math.cos(angle) * radius;
-      const y = Math.sin(angle) * radius;
-      
-      if (i === 0) {
-        shape.moveTo(x, y);
-      } else {
-        shape.lineTo(x, y);
-      }
-    }
-    shape.closePath();
-    
-    return shape;
-  }, [size]);
   
   return (
     <group ref={groupRef} position={position}>
