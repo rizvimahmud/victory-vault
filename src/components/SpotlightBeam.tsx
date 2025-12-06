@@ -2,90 +2,211 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import gsap from 'gsap';
-import { createSpotlightMaterial } from '../shaders/spotlight';
 
 interface SpotlightBeamProps {
   position?: [number, number, number];
   targetPosition?: [number, number, number];
-  scale?: [number, number, number];
   intensity?: number;
-  spread?: number;
+  angle?: number;
+  penumbra?: number;
+  distance?: number;
   animationDelay?: number;
   visible?: boolean;
+  color?: string;
+  scale?: [number, number, number];
+  spread?: number;
 }
 
-const SpotlightBeam: React.FC<SpotlightBeamProps> = ({ 
-  position = [0, 5, 0],
+// 2D Spotlight cone shader - creates flat triangular beam
+const spotlightVertexShader = `
+  varying vec2 vUv;
+  
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const spotlightFragmentShader = `
+  uniform float uOpacity;
+  uniform float uIntensity;
+  uniform vec3 uColor;
+  uniform float uTime;
+  
+  varying vec2 vUv;
+  
+  // Simple noise function
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  }
+  
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+  
+  void main() {
+    vec2 uv = vUv;
+    
+    // Flip Y so narrow end is at top of screen, wide at bottom
+    float flippedY = 1.0 - uv.y;
+    
+    // Create cone shape: narrow at top (flippedY=0), wide at bottom (flippedY=1)
+    float coneWidth = mix(0.02, 0.5, flippedY);
+    float distFromCenter = abs(uv.x - 0.5);
+    
+    // Check if pixel is inside the cone
+    float insideCone = 1.0 - smoothstep(coneWidth * 0.8, coneWidth, distFromCenter);
+    
+    // If outside cone, discard
+    if (insideCone < 0.01) {
+      discard;
+    }
+    
+    // Soft edges
+    float edgeSoftness = 1.0 - smoothstep(coneWidth * 0.3, coneWidth, distFromCenter);
+    edgeSoftness = pow(edgeSoftness, 1.5);
+    
+    // Vertical gradient - brighter at source (top), fading strongly toward bottom
+    float verticalGradient = 1.0 - flippedY * 0.8;
+    verticalGradient = pow(verticalGradient, 1.2);
+    
+    // Fade out the bottom portion of the beam completely
+    float bottomFade = 1.0 - smoothstep(0.6, 0.95, flippedY);
+    verticalGradient *= bottomFade;
+    
+    // Center brightness falloff
+    float centerBrightness = 1.0 - (distFromCenter / coneWidth) * 0.5;
+    
+    // Subtle animated fog/haze
+    float fog = noise(uv * vec2(3.0, 8.0) + uTime * 0.05) * 0.15 + 0.85;
+    
+    // Very subtle light rays
+    float rays = noise(vec2(uv.x * 20.0, flippedY * 4.0 + uTime * 0.03));
+    rays = pow(rays, 3.0) * 0.08 * edgeSoftness;
+    
+    // Combine
+    float beamIntensity = edgeSoftness * verticalGradient * centerBrightness * fog;
+    beamIntensity += rays;
+    beamIntensity *= uIntensity;
+    
+    // Color with slight blue-white tint
+    vec3 beamColor = mix(uColor, vec3(0.9, 0.95, 1.0), 0.1);
+    
+    float alpha = beamIntensity * uOpacity * insideCone;
+    alpha = clamp(alpha, 0.0, 0.25);
+    
+    gl_FragColor = vec4(beamColor, alpha);
+  }
+`;
+
+const SpotlightBeam: React.FC<SpotlightBeamProps> = ({
+  position = [0, 8, 0],
   targetPosition = [0, 0, 0],
-  scale = [8, 10, 1],
-  intensity = 0.8,
-  spread = 0.45,
+  intensity = 0.5,
+  angle = Math.PI / 6,
+  penumbra = 0.5,
+  distance = 15,
   animationDelay = 0,
-  visible = true
+  visible = true,
+  color = '#ffffff',
+  scale = [1, 1, 1],
+  spread = 0.5
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
-  const materialRef = useRef<THREE.ShaderMaterial | null>(null);
-  const opacityRef = useRef({ value: 0 });
-  
-  const material = useMemo(() => {
-    const mat = createSpotlightMaterial(intensity, spread);
-    materialRef.current = mat;
-    return mat;
-  }, [intensity, spread]);
-  
-  // Calculate rotation to point at target
-  const rotation = useMemo(() => {
-    const dx = targetPosition[0] - position[0];
-    const dy = targetPosition[1] - position[1];
-    const angle = Math.atan2(dx, -dy);
-    return [0, 0, -angle] as [number, number, number];
-  }, [position, targetPosition]);
-  
+  const animationRef = useRef({ opacity: 0 });
+
+  // Create shader material
+  const shaderMaterial = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      vertexShader: spotlightVertexShader,
+      fragmentShader: spotlightFragmentShader,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uOpacity: { value: 0 },
+        uIntensity: { value: intensity },
+        uColor: { value: new THREE.Color(color) },
+        uTime: { value: 0 }
+      }
+    });
+  }, [color, intensity]);
+
+  // Animate visibility
   useEffect(() => {
-    if (!materialRef.current) return;
-    
-    const mat = materialRef.current;
-    
     if (visible) {
-      gsap.to(opacityRef.current, {
-        value: 0.55,
-        duration: 1.2,
+      gsap.to(animationRef.current, {
+        opacity: 1,
+        duration: 2.0,
         delay: animationDelay,
-        ease: 'power2.out',
+        ease: 'power2.inOut',
         onUpdate: () => {
-          mat.uniforms.uOpacity.value = opacityRef.current.value;
+          if (shaderMaterial.uniforms) {
+            shaderMaterial.uniforms.uOpacity.value = animationRef.current.opacity;
+          }
         }
       });
     } else {
-      gsap.to(opacityRef.current, {
-        value: 0,
-        duration: 0.5,
+      gsap.to(animationRef.current, {
+        opacity: 0,
+        duration: 1.0,
+        ease: 'power2.inOut',
         onUpdate: () => {
-          mat.uniforms.uOpacity.value = opacityRef.current.value;
+          if (shaderMaterial.uniforms) {
+            shaderMaterial.uniforms.uOpacity.value = animationRef.current.opacity;
+          }
         }
       });
     }
-    
+
     return () => {
-      gsap.killTweensOf(opacityRef.current);
+      gsap.killTweensOf(animationRef.current);
     };
-  }, [animationDelay, visible]);
-  
+  }, [animationDelay, visible, shaderMaterial]);
+
+  // Calculate plane size and orientation
+  useEffect(() => {
+    if (!meshRef.current) return;
+
+    const start = new THREE.Vector3(...position);
+    const end = new THREE.Vector3(...targetPosition);
+    const direction = end.clone().sub(start);
+    const beamLength = direction.length();
+    
+    // Calculate beam width at bottom based on angle and spread
+    const beamWidth = Math.tan(angle) * beamLength * spread * 2;
+    
+    // Scale the plane
+    meshRef.current.scale.set(beamWidth, beamLength, 1);
+    
+    // Position at midpoint between source and target
+    const midpoint = start.clone().add(end).multiplyScalar(0.5);
+    meshRef.current.position.copy(midpoint);
+    
+    // Rotate to face camera and point in beam direction
+    const angleToTarget = Math.atan2(direction.x, -direction.y);
+    meshRef.current.rotation.z = angleToTarget;
+  }, [position, targetPosition, angle, spread]);
+
+  // Update time uniform
   useFrame((state) => {
-    if (materialRef.current) {
-      materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    if (shaderMaterial.uniforms) {
+      shaderMaterial.uniforms.uTime.value = state.clock.elapsedTime;
     }
   });
-  
+
   return (
-    <mesh 
-      ref={meshRef} 
-      position={position} 
-      rotation={rotation}
-      scale={scale}
-    >
+    <mesh ref={meshRef}>
       <planeGeometry args={[1, 1, 1, 1]} />
-      <primitive object={material} attach="material" />
+      <primitive object={shaderMaterial} attach="material" />
     </mesh>
   );
 };

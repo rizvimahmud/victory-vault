@@ -419,60 +419,39 @@ const GameScene: React.FC<{
       {/* Smoke at bottom */}
       <Smoke position={[0, -5, -2]} scale={[22, 6, 1]} opacity={0.5} />
       
-      {/* Spotlights - pointing at cards */}
+      {/* Spotlights - always visible, aligned with card positions */}
       <SpotlightBeam
-        position={[-7, 8, -4]}
-        targetPosition={leftCardPos}
-        scale={[10, 14, 1]}
-        intensity={0.9}
-        spread={0.5}
-        animationDelay={0.3}
-        visible={showCards || showCelebration}
+        position={[-8, 9, -5]}
+        targetPosition={[-1.9, -4, -5]}
+        intensity={0.5}
+        spread={0.6}
+        angle={Math.PI / 5}
+        penumbra={0.6}
+        animationDelay={showIntro ? 0.3 : 0}
+        visible={true}
       />
       <SpotlightBeam
-        position={[7, 8, -4]}
-        targetPosition={rightCardPos}
-        scale={[10, 14, 1]}
-        intensity={0.9}
-        spread={0.5}
-        animationDelay={0.5}
-        visible={showCards || showCelebration}
+        position={[8, 9, -5]}
+        targetPosition={[1.9, -4, -5]}
+        intensity={0.5}
+        spread={0.6}
+        angle={Math.PI / 5}
+        penumbra={0.6}
+        animationDelay={showIntro ? 0.5 : 0}
+        visible={true}
       />
       
-      {/* Center spotlight for celebration */}
+      {/* Center spotlight for celebration - fades in smoothly */}
       <SpotlightBeam
-        position={[0, 9, -4]}
-        targetPosition={[0, 0, 0]}
-        scale={[8, 15, 1]}
-        intensity={0.7}
-        spread={0.4}
+        position={[0, 10, -5]}
+        targetPosition={[0, -4, -5]}
+        intensity={showCelebration ? 0.4 : 0}
+        spread={0.55}
+        angle={Math.PI / 5}
+        penumbra={0.7}
         animationDelay={0}
         visible={showCelebration}
       />
-      
-      {/* Intro spotlights - wider and more ambient */}
-      {showIntro && (
-        <>
-          <SpotlightBeam
-            position={[-5, 7, -4]}
-            targetPosition={[-1, -1, 0]}
-            scale={[9, 12, 1]}
-            intensity={0.6}
-            spread={0.55}
-            animationDelay={0.5}
-            visible={true}
-          />
-          <SpotlightBeam
-            position={[5, 7, -4]}
-            targetPosition={[1, -1, 0]}
-            scale={[9, 12, 1]}
-            intensity={0.6}
-            spread={0.55}
-            animationDelay={0.7}
-            visible={true}
-          />
-        </>
-      )}
       
       {/* INTRO PHASE */}
       {showIntro && (

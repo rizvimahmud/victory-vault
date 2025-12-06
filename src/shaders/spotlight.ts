@@ -15,14 +15,14 @@ export const spotlightFragmentShader = `
   uniform vec3 uColor;
   uniform float uTime;
   uniform float uSpread;
-  
+
   varying vec2 vUv;
-  
+
   // Simplex noise
   vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
   vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
   vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
-  
+
   float snoise(vec2 v) {
     const vec4 C = vec4(0.211324865405187, 0.366025403784439,
              -0.577350269189626, 0.024390243902439);
@@ -47,48 +47,71 @@ export const spotlightFragmentShader = `
     g.yz = a0.yz * x12.xz + h.yz * x12.yw;
     return 130.0 * dot(m, g);
   }
-  
+
   void main() {
     vec2 uv = vUv;
-    
-    // Create wide cone - expands from top to bottom
-    float coneExpand = pow(uv.y, 0.4) * uSpread;
+
+    // Create wide, visible cone
+    float coneProgress = pow(uv.y, 0.4);
+    float coneWidth = 0.15 + coneProgress * uSpread;
     float distFromCenter = abs(uv.x - 0.5);
-    
-    // Main beam with very soft edges
-    float beam = 1.0 - smoothstep(0.0, coneExpand, distFromCenter);
-    beam = pow(beam, 0.6); // Softer falloff
-    
-    // Vertical gradient - bright at top, fading to center/bottom
-    float verticalFade = pow(1.0 - uv.y * 0.7, 0.4);
-    
-    // Volumetric haze effect
-    float haze1 = snoise(uv * vec2(2.0, 4.0) + uTime * 0.03) * 0.5 + 0.5;
-    float haze2 = snoise(uv * vec2(3.0, 6.0) - uTime * 0.02) * 0.5 + 0.5;
-    float haze = mix(haze1, haze2, 0.5) * 0.4 + 0.6;
-    
-    // Soft glow around the beam
-    float glow = exp(-distFromCenter * 4.0 / coneExpand) * 0.4;
-    glow *= verticalFade;
-    
-    // Light source at top
-    float sourceY = smoothstep(0.12, 0.0, uv.y);
-    float sourceX = smoothstep(0.08, 0.0, distFromCenter);
-    float source = sourceY * sourceX * 3.0;
-    
-    // Combine everything
-    float intensity = beam * verticalFade * haze * uIntensity;
-    intensity += glow;
-    intensity += source;
-    
-    // Subtle dust particles
-    float dust = snoise(uv * 30.0 + uTime * 0.2);
-    dust = smoothstep(0.6, 1.0, dust) * beam * verticalFade * 0.15;
-    intensity += dust;
-    
+
+    // Sharp, highly visible core beam
+    float coreBeam = 1.0 - smoothstep(coneWidth * 0.25, coneWidth * 0.45, distFromCenter);
+    coreBeam = pow(coreBeam, 3.0);
+
+    // Wide inner glow for visibility
+    float innerGlow = 1.0 - smoothstep(coneWidth * 0.4, coneWidth * 0.8, distFromCenter);
+    innerGlow = pow(innerGlow, 2.0);
+
+    // Broad outer atmosphere
+    float outerGlow = 1.0 - smoothstep(coneWidth * 0.6, coneWidth * 1.4, distFromCenter);
+    outerGlow = pow(outerGlow, 1.5);
+
+    // Maintain brightness throughout - less fade
+    float verticalFade = pow(1.0 - uv.y * 0.4, 0.2);
+
+    // Very bright light source at top
+    float sourceIntensity = smoothstep(0.2, 0.0, uv.y) * smoothstep(0.15, 0.0, distFromCenter);
+    sourceIntensity = pow(sourceIntensity, 0.4) * 8.0;
+
+    // Minimal fog interference
+    float fog1 = snoise(uv * vec2(2.0, 4.0) + uTime * 0.03) * 0.5 + 0.5;
+    float fog2 = snoise(uv * vec2(3.0, 5.0) - uTime * 0.02) * 0.5 + 0.5;
+    float fog = mix(fog1, fog2, 0.5) * 0.1 + 0.9;
+
+    // Visible god rays
+    float rays = snoise(vec2(uv.x * 8.0, uv.y * 2.0 + uTime * 0.05)) * 0.5 + 0.5;
+    rays = pow(rays, 2.0) * innerGlow * 0.5;
+
+    // Subtle particles
+    float particles = snoise(uv * 35.0 + uTime * 0.15);
+    particles = smoothstep(0.75, 1.0, particles) * innerGlow * 0.3;
+
+    // Build bright, visible beam
+    float mainBeam = coreBeam * fog * verticalFade * 5.0;
+    float midLayer = innerGlow * verticalFade * 3.0;
+    float atmosphere = outerGlow * verticalFade * 1.5;
+
+    // Combine with high intensity
+    float intensity = mainBeam * uIntensity;
+    intensity += midLayer * uIntensity;
+    intensity += atmosphere * uIntensity;
+    intensity += sourceIntensity;
+    intensity += rays;
+    intensity += particles;
+
+    // Very strong target illumination
+    float targetGlow = smoothstep(0.5, 1.0, uv.y) * (coreBeam + innerGlow * 0.5) * 4.0;
+    intensity += targetGlow;
+
+    // Bright hotspot at bottom
+    float hotspot = smoothstep(0.8, 1.0, uv.y) * (coreBeam + innerGlow) * 5.0;
+    intensity += hotspot;
+
     vec3 color = uColor;
     float alpha = intensity * uOpacity;
-    
+
     gl_FragColor = vec4(color, alpha);
   }
 `;
@@ -102,9 +125,9 @@ export const createSpotlightMaterial = (intensity: number = 1.0, spread: number 
     blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
     uniforms: {
-      uOpacity: { value: 0.55 },
+      uOpacity: { value: 0.9 },
       uIntensity: { value: intensity },
-      uColor: { value: new THREE.Color(0.85, 0.88, 0.95) },
+      uColor: { value: new THREE.Color(1.0, 1.0, 1.0) },
       uTime: { value: 0 },
       uSpread: { value: spread }
     }
