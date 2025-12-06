@@ -4,33 +4,113 @@ import { Text } from '@react-three/drei';
 import * as THREE from 'three';
 import gsap from 'gsap';
 
-// Shimmer shader for card border
-const shimmerVertexShader = `
+// Gold gradient shader for border
+const goldBorderVertexShader = `
   varying vec2 vUv;
+  varying vec3 vPosition;
   void main() {
     vUv = uv;
+    vPosition = position;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
-const shimmerFragmentShader = `
+const goldBorderFragmentShader = `
   uniform float uTime;
-  uniform vec3 uColor;
-  uniform float uShimmerSpeed;
+  
+  varying vec2 vUv;
+  varying vec3 vPosition;
+  
+  void main() {
+    vec2 uv = vUv;
+    
+    // Gold gradient from top-left to bottom-right
+    float gradient = (uv.x + uv.y) * 0.5;
+    
+    // Base gold colors
+    vec3 goldLight = vec3(0.95, 0.85, 0.55);  // Light gold
+    vec3 goldMid = vec3(0.80, 0.65, 0.35);    // Mid gold
+    vec3 goldDark = vec3(0.55, 0.40, 0.20);   // Dark gold/bronze
+    
+    // Create banded gradient for 3D metallic look
+    vec3 color;
+    if (gradient < 0.3) {
+      color = mix(goldDark, goldMid, gradient / 0.3);
+    } else if (gradient < 0.6) {
+      color = mix(goldMid, goldLight, (gradient - 0.3) / 0.3);
+    } else {
+      color = mix(goldLight, goldMid, (gradient - 0.6) / 0.4);
+    }
+    
+    // Subtle shimmer
+    float shimmer = sin((uv.x * 8.0 + uv.y * 8.0) - uTime * 1.5) * 0.5 + 0.5;
+    shimmer = pow(shimmer, 4.0) * 0.15;
+    color += vec3(shimmer);
+    
+    // Edge highlight
+    float edgeHighlight = smoothstep(0.0, 0.15, uv.x) * smoothstep(1.0, 0.85, uv.x);
+    edgeHighlight *= smoothstep(0.0, 0.15, uv.y) * smoothstep(1.0, 0.85, uv.y);
+    color = mix(color * 0.7, color, edgeHighlight);
+    
+    gl_FragColor = vec4(color, 1.0);
+  }
+`;
+
+// Blue gradient shader for card interior
+const blueInteriorFragmentShader = `
+  uniform float uTime;
   
   varying vec2 vUv;
   
   void main() {
     vec2 uv = vUv;
     
-    // Create shimmer wave moving around the border
-    float shimmer = sin((uv.x + uv.y) * 10.0 - uTime * uShimmerSpeed) * 0.5 + 0.5;
-    shimmer = pow(shimmer, 3.0);
+    // Vertical gradient - lighter at top, darker at bottom
+    vec3 colorTop = vec3(0.30, 0.50, 0.70);     // Light blue
+    vec3 colorBottom = vec3(0.12, 0.25, 0.42);  // Dark blue
     
-    // Bright spots
-    vec3 color = uColor + vec3(shimmer * 0.4);
+    float gradientY = uv.y * 0.7 + 0.15;
+    vec3 color = mix(colorBottom, colorTop, gradientY);
+    
+    // Subtle diagonal pattern/texture
+    float pattern = sin(uv.x * 40.0 + uv.y * 40.0) * 0.5 + 0.5;
+    pattern = pattern * 0.03;
+    color += vec3(pattern);
+    
+    // Center glow
+    float centerGlow = 1.0 - length((uv - vec2(0.5, 0.45)) * vec2(1.2, 1.0));
+    centerGlow = max(0.0, centerGlow);
+    centerGlow = pow(centerGlow, 2.0) * 0.15;
+    color += vec3(centerGlow * 0.5, centerGlow * 0.7, centerGlow);
     
     gl_FragColor = vec4(color, 1.0);
+  }
+`;
+
+// Cyan glow line shader
+const glowLineFragmentShader = `
+  uniform float uTime;
+  
+  varying vec2 vUv;
+  
+  void main() {
+    vec2 uv = vUv;
+    
+    // Distance from edge (for line effect)
+    float distFromEdge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    
+    // Create thin line near edge
+    float line = smoothstep(0.0, 0.02, distFromEdge) * smoothstep(0.06, 0.02, distFromEdge);
+    
+    // Animated pulse
+    float pulse = sin(uTime * 2.0) * 0.3 + 0.7;
+    
+    // Cyan glow color
+    vec3 glowColor = vec3(0.2, 0.7, 1.0);
+    
+    float alpha = line * pulse * 0.8;
+    
+    gl_FragColor = vec4(glowColor, alpha);
   }
 `;
 
@@ -62,7 +142,9 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
   disabled = false
 }) => {
   const groupRef = useRef<THREE.Group>(null);
-  const shimmerMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
+  const goldMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
+  const blueMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
+  const glowMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const [hovered, setHovered] = useState(false);
   
   const animState = useRef({
@@ -72,53 +154,99 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
     hoverScale: 1
   });
   
-  // Create shield shape
+  // Create shield shape - outer border
   const shieldShape = useMemo(() => {
     const shape = new THREE.Shape();
-    const width = 1.35;
-    const height = 1.65;
+    const width = 1.4;
+    const height = 1.75;
     
-    shape.moveTo(-width/2 + 0.1, height/2);
-    shape.lineTo(width/2 - 0.1, height/2);
-    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - 0.1);
+    // More pronounced shield shape
+    shape.moveTo(-width/2 + 0.12, height/2);
+    shape.lineTo(width/2 - 0.12, height/2);
+    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - 0.12);
     shape.lineTo(width/2, -height/4);
-    shape.quadraticCurveTo(width/2, -height/2 + 0.1, 0, -height/2 - 0.28);
-    shape.quadraticCurveTo(-width/2, -height/2 + 0.1, -width/2, -height/4);
-    shape.lineTo(-width/2, height/2 - 0.1);
-    shape.quadraticCurveTo(-width/2, height/2, -width/2 + 0.1, height/2);
+    shape.quadraticCurveTo(width/2, -height/2 + 0.15, 0, -height/2 - 0.25);
+    shape.quadraticCurveTo(-width/2, -height/2 + 0.15, -width/2, -height/4);
+    shape.lineTo(-width/2, height/2 - 0.12);
+    shape.quadraticCurveTo(-width/2, height/2, -width/2 + 0.12, height/2);
     
     return shape;
   }, []);
   
+  // Inner shield shape for blue area
   const innerShieldShape = useMemo(() => {
     const shape = new THREE.Shape();
-    const width = 1.18;
-    const height = 1.48;
+    const width = 1.22;
+    const height = 1.55;
     
-    shape.moveTo(-width/2 + 0.08, height/2);
-    shape.lineTo(width/2 - 0.08, height/2);
-    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - 0.08);
+    shape.moveTo(-width/2 + 0.10, height/2);
+    shape.lineTo(width/2 - 0.10, height/2);
+    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - 0.10);
     shape.lineTo(width/2, -height/4);
-    shape.quadraticCurveTo(width/2, -height/2 + 0.08, 0, -height/2 - 0.22);
-    shape.quadraticCurveTo(-width/2, -height/2 + 0.08, -width/2, -height/4);
-    shape.lineTo(-width/2, height/2 - 0.08);
-    shape.quadraticCurveTo(-width/2, height/2, -width/2 + 0.08, height/2);
+    shape.quadraticCurveTo(width/2, -height/2 + 0.12, 0, -height/2 - 0.20);
+    shape.quadraticCurveTo(-width/2, -height/2 + 0.12, -width/2, -height/4);
+    shape.lineTo(-width/2, height/2 - 0.10);
+    shape.quadraticCurveTo(-width/2, height/2, -width/2 + 0.10, height/2);
     
     return shape;
   }, []);
   
-  // Shimmer material
-  const shimmerMaterial = useMemo(() => {
+  // Glow line shield shape (slightly smaller)
+  const glowLineShape = useMemo(() => {
+    const shape = new THREE.Shape();
+    const width = 1.16;
+    const height = 1.48;
+    
+    shape.moveTo(-width/2 + 0.09, height/2);
+    shape.lineTo(width/2 - 0.09, height/2);
+    shape.quadraticCurveTo(width/2, height/2, width/2, height/2 - 0.09);
+    shape.lineTo(width/2, -height/4);
+    shape.quadraticCurveTo(width/2, -height/2 + 0.11, 0, -height/2 - 0.18);
+    shape.quadraticCurveTo(-width/2, -height/2 + 0.11, -width/2, -height/4);
+    shape.lineTo(-width/2, height/2 - 0.09);
+    shape.quadraticCurveTo(-width/2, height/2, -width/2 + 0.09, height/2);
+    
+    return shape;
+  }, []);
+  
+  // Gold border material
+  const goldMaterial = useMemo(() => {
     const mat = new THREE.ShaderMaterial({
-      vertexShader: shimmerVertexShader,
-      fragmentShader: shimmerFragmentShader,
+      vertexShader: goldBorderVertexShader,
+      fragmentShader: goldBorderFragmentShader,
       uniforms: {
-        uTime: { value: 0 },
-        uColor: { value: new THREE.Color('#c9a648') },
-        uShimmerSpeed: { value: 2.0 }
+        uTime: { value: 0 }
       }
     });
-    shimmerMaterialRef.current = mat;
+    goldMaterialRef.current = mat;
+    return mat;
+  }, []);
+  
+  // Blue interior material
+  const blueMaterial = useMemo(() => {
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: goldBorderVertexShader,
+      fragmentShader: blueInteriorFragmentShader,
+      uniforms: {
+        uTime: { value: 0 }
+      }
+    });
+    blueMaterialRef.current = mat;
+    return mat;
+  }, []);
+  
+  // Cyan glow line material
+  const glowMaterial = useMemo(() => {
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: goldBorderVertexShader,
+      fragmentShader: glowLineFragmentShader,
+      uniforms: {
+        uTime: { value: 0 }
+      },
+      transparent: true,
+      blending: THREE.AdditiveBlending
+    });
+    glowMaterialRef.current = mat;
     return mat;
   }, []);
   
@@ -196,8 +324,15 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
       groupRef.current.position.z = position[2] + animState.current.positionZ;
     }
     
-    if (shimmerMaterialRef.current) {
-      shimmerMaterialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    const time = state.clock.elapsedTime;
+    if (goldMaterialRef.current) {
+      goldMaterialRef.current.uniforms.uTime.value = time;
+    }
+    if (blueMaterialRef.current) {
+      blueMaterialRef.current.uniforms.uTime.value = time;
+    }
+    if (glowMaterialRef.current) {
+      glowMaterialRef.current.uniforms.uTime.value = time;
     }
   });
   
@@ -220,74 +355,129 @@ const ShieldCard: React.FC<ShieldCardProps> = ({
     >
       {/* Front face */}
       <group rotation={[0, 0, 0]}>
-        {/* Gold shimmer border */}
+        {/* Gold gradient border */}
         <mesh position={[0, 0, -0.02]}>
           <shapeGeometry args={[shieldShape]} />
-          <primitive object={shimmerMaterial} attach="material" />
+          <primitive object={goldMaterial} attach="material" />
         </mesh>
         
-        {/* Blue inner with gradient effect */}
+        {/* Blue gradient interior */}
         <mesh position={[0, 0, -0.01]}>
           <shapeGeometry args={[innerShieldShape]} />
-          <meshBasicMaterial color="#1a3a5c" side={THREE.FrontSide} />
+          <primitive object={blueMaterial} attach="material" />
         </mesh>
         
-        {/* Inner accent border */}
-        <mesh position={[0, 0, 0]} scale={[0.94, 0.94, 1]}>
-          <shapeGeometry args={[innerShieldShape]} />
-          <meshBasicMaterial color="#2a5a8c" side={THREE.FrontSide} transparent opacity={0.6} />
+        {/* Cyan glow line */}
+        <mesh position={[0, 0, 0.001]}>
+          <shapeGeometry args={[glowLineShape]} />
+          <primitive object={glowMaterial} attach="material" />
         </mesh>
         
-        {/* Inner glow line */}
-        <mesh position={[0, 0, 0.005]} scale={[0.92, 0.92, 1]}>
-          <shapeGeometry args={[innerShieldShape]} />
-          <meshBasicMaterial color="#3da9fc" side={THREE.FrontSide} transparent opacity={0.15} />
-        </mesh>
+        {/* Small Victory Vault logo placeholder at top */}
+        <Text
+          position={[0, 0.55, 0.02]}
+          fontSize={0.12}
+          color="#8899aa"
+          anchorX="center"
+          anchorY="middle"
+          font="/fonts/BebasNeue-Regular.ttf"
+        >
+          VICTORY VAULT
+        </Text>
         
-        {/* Front text */}
+        {/* Main question mark - large gold with shadow */}
+        <Text
+          position={[0.02, -0.08, 0.015]}
+          fontSize={1.0}
+          color="#554422"
+          anchorX="center"
+          anchorY="middle"
+          font="/fonts/BebasNeue-Regular.ttf"
+          fillOpacity={0.4}
+        >
+          {frontContent}
+        </Text>
         <Text
           position={[0, -0.05, 0.02]}
-          fontSize={0.95}
-          color="#c9a648"
+          fontSize={1.0}
+          color="#d4a84b"
           anchorX="center"
           anchorY="middle"
           font="/fonts/BebasNeue-Regular.ttf"
         >
           {frontContent}
         </Text>
+        
+        {/* FINAL FLIP text at bottom */}
+        <Text
+          position={[0, -0.72, 0.02]}
+          fontSize={0.11}
+          color="#8899aa"
+          anchorX="center"
+          anchorY="middle"
+          font="/fonts/BebasNeue-Regular.ttf"
+          letterSpacing={0.1}
+        >
+          FINAL FLIP
+        </Text>
       </group>
       
       {/* Back face */}
       <group rotation={[0, Math.PI, 0]}>
-        {/* Gold shimmer border */}
+        {/* Gold gradient border */}
         <mesh position={[0, 0, -0.02]}>
           <shapeGeometry args={[shieldShape]} />
-          <meshBasicMaterial color={isWinner ? '#ffd700' : (showSadEmoji ? '#666' : '#c9a648')} />
+          <meshBasicMaterial color={isWinner ? '#ffd700' : (showSadEmoji ? '#555' : '#c9a648')} />
         </mesh>
         
-        {/* Blue inner */}
+        {/* Blue interior */}
         <mesh position={[0, 0, -0.01]}>
           <shapeGeometry args={[innerShieldShape]} />
-          <meshBasicMaterial color={showSadEmoji ? '#2a2a3a' : '#1a3a5c'} side={THREE.FrontSide} />
+          <meshBasicMaterial color={showSadEmoji ? '#1a1a2a' : '#1a3a5c'} side={THREE.FrontSide} />
         </mesh>
         
-        {/* Back text/emoji */}
+        {/* Victory Vault text on back */}
+        <Text
+          position={[0, 0.55, 0.02]}
+          fontSize={0.12}
+          color="#8899aa"
+          anchorX="center"
+          anchorY="middle"
+          font="/fonts/BebasNeue-Regular.ttf"
+        >
+          VICTORY VAULT
+        </Text>
+        
+        {/* Back content */}
         <Text
           position={[0, -0.05, 0.02]}
-          fontSize={showSadEmoji ? 0.7 : 0.95}
-          color={isWinner ? '#ffd700' : (showSadEmoji ? '#888' : '#c9a648')}
+          fontSize={showSadEmoji ? 0.75 : 1.0}
+          color={isWinner ? '#ffd700' : (showSadEmoji ? '#666' : '#d4a84b')}
           anchorX="center"
           anchorY="middle"
           font={showSadEmoji ? undefined : "/fonts/BebasNeue-Regular.ttf"}
         >
           {backDisplay}
         </Text>
+        
+        {/* FINAL FLIP text at bottom */}
+        <Text
+          position={[0, -0.72, 0.02]}
+          fontSize={0.11}
+          color="#8899aa"
+          anchorX="center"
+          anchorY="middle"
+          font="/fonts/BebasNeue-Regular.ttf"
+          letterSpacing={0.1}
+        >
+          FINAL FLIP
+        </Text>
       </group>
       
       {/* Glow effects for winner */}
       {isWinner && (
         <>
-          <pointLight position={[0, 0, 0.5]} intensity={1} color="#ffd700" distance={3} />
+          <pointLight position={[0, 0, 0.5]} intensity={1.5} color="#ffd700" distance={3} />
         </>
       )}
     </group>
